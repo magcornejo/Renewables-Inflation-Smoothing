@@ -33,14 +33,14 @@ Folder path    Description
 ../data1      Raw datasets
 ../data2      Intermediate data files
 
-File Name      Description
+  File Name      Description
 
-crude_oil.xlsx    Raw dataset for crude oil SVAR estimation
-natural_gas.xlsx  Raw dataset for natural gas SVAR estimation
-panel_data.xlsx    Raw dataset for panel local projections estimation
-expenditure.xlsx  Raw dataset with government expenditure to GDP ratio
-oil_shocks.csv    Intermediate data file with crude oil structural shocks
-gas_shocks.csv    Intermediate data file with natural gas structural shocks
+- crude_oil.xlsx    Raw dataset for crude oil SVAR estimation
+- natural_gas.xlsx  Raw dataset for natural gas SVAR estimation
+- panel_data.xlsx    Raw dataset for panel local projections estimation
+- expenditure.xlsx  Raw dataset with government expenditure to GDP ratio
+- oil_shocks.csv    Intermediate data file with crude oil structural shocks
+- gas_shocks.csv    Intermediate data file with natural gas structural shocks
 
 
 ################################################################################
