@@ -21,14 +21,15 @@ require("parallel") # base package
 # Directories
 dir <- list()
 dir$root <- dirname(getwd())
-dir$lp <- paste0(dir$root,"/Local projections")
-dir$shocks <- paste0(dir$root,"/Structural shocks identifications")
+dir$data1 <- paste0(dir$root,"/data1")
+dir$data2 <- paste0(dir$root,"/data2")
 
-# Import panel data
-paneldata <- read_xlsx(paste0(dir$lp,"/panel_data.xlsx"))
-oil_shocks <- read.csv(paste0(dir$shocks,"/oil_shocks.csv"))
-gas_shocks <- read.csv(paste0(dir$shocks,"/gas_shocks.csv"))
-  
+# Import data
+paneldata <- read_xlsx(paste0(dir$data1,"/panel_data.xlsx"))
+oil_shocks <- read.csv(paste0(dir$data2,"/oil_shocks.csv"))
+gas_shocks <- read.csv(paste0(dir$data2,"/gas_shocks.csv"))
+exp <- read_xlsx(paste0(dir$data1,"/expenditure.xlsx"))
+
 # Data transformation
 country_mapping <- c(
   "Argentina" = 1,
@@ -73,7 +74,6 @@ paneldata <- merge(paneldata, gas_shocks, by = "month", all.x = TRUE)
 # Merge government expenditure data
 paneldata$year <- substring(paneldata$month,1,4)
 paneldata$year <- as.numeric(paneldata$year)
-exp <- read.xlsx("C:/Users/mcornejo/Dropbox/PAPER RENEWABLE ENERGY AND PRICES/Data/Government Expenditure/Government Expenditure.xlsx")
 exp$year <- exp$año
 exp$country <- exp$pais
 paneldata <- left_join(paneldata,exp, by = c("country","year"))
@@ -98,16 +98,6 @@ ggplot(data = annual, aes(x = year, y = mean_renew, group = country)) +
   theme(legend.position = "none", axis.title.x = element_blank(),
         axis.title.y = element_blank(), strip.text = element_text(size = 11))
 dev.off() 
-
-#map
-
-library(rworldmap)
-#buscar el ISO3 de cada país
-#filtrar 2005
-#filtrar 2021
-
-sPDF <- joinCountryData2Map()
-mapCountryData(SPDF, nameColumnToPlot = "mean_renew")
 
 
 #===============================================================================
