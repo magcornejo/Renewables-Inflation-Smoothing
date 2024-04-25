@@ -22,12 +22,12 @@ require("parallel") # base package
 # Directories
 dir <- list()
 dir$root <- dirname(getwd())
-dir$shocks <- paste0(dir$root,"/Structural shocks identifications")
+dir$data1 <- paste0(dir$root,"/data1")
 
 # Import time series datasets
-crude_oil <- read_xlsx(paste0(dir$shocks,"/crude_oil.xlsx"), sheet = "monthly")
+crude_oil <- read_xlsx(paste0(dir$data1,"/crude_oil.xlsx"), sheet = "monthly")
 crude_oil <- read.zoo(crude_oil, fomat = "%Y-%m-%d")
-natural_gas <- read_xlsx(paste0(dir$shocks,"/natural_gas.xlsx"), sheet = "monthly")
+natural_gas <- read_xlsx(paste0(dir$data1,"/natural_gas.xlsx"), sheet = "monthly")
 natural_gas <- read.zoo(natural_gas, fomat = "%Y-%m-%d")
 
 # Data transformation
