@@ -904,9 +904,12 @@ dev.off()
 
 
 
-## ROBUSTNESS
+#===============================================================================
+# 4). Robustness ------
+#===============================================================================
 
-#SENSITIVITY TO GAMMA
+
+# a) Sensitivity to gamma
 
 #gamma=1
 
@@ -1170,8 +1173,7 @@ grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position=
              ncol=2)
 dev.off()
 
-#gamma=10
-
+# gamma=10
 
 #WTI 
 shock_energy <- lp_nl_panel(
@@ -1435,7 +1437,7 @@ dev.off()
 
 
 
-## DEFINING A DUMMY VARIABLE TO DETERMINE EACH COUNTRY's CURRENT RENEWABLE ENVIRONMENT
+# b) Defining a dummy variable to determine each country's current renewable environment
 #d if country mean >50
 #d1 if i,t >50
 #d2 if i,t >55 (median)
