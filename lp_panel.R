@@ -99,7 +99,10 @@ ggplot(data = annual, aes(x = year, y = mean_renew, group = country)) +
         axis.title.y = element_blank(), strip.text = element_text(size = 11))
 dev.off() 
 
-
+data <- data %>% rename(cross_id = id)
+data <- data %>% rename(date_id = month)
+data <- pdata.frame(data, index = c("cross_id", "date_id"))
+       
 #===============================================================================
 # 2). Local projections (with gamma=5) ------
 #===============================================================================
@@ -363,7 +366,7 @@ plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
 cairo_ps(file = "CIRF.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
 
 g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
 
 grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
              plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
@@ -632,7 +635,7 @@ plot4 <- ggplot(cshock_overall_neg_long, aes(x = time, group = regime)) +
 
 cairo_ps(file = "CIRF_oil_asym.eps", onefile = FALSE, fallback_resolution = 600)
 g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
 
 grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
              plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
@@ -892,7 +895,7 @@ plot4 <- ggplot(cshock_overall_neg_long, aes(x = time, group = regime)) +
 
 cairo_ps(file = "CIRF_gas_asym.eps", onefile = FALSE, fallback_resolution = 600)
 g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
 
 grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
              plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
@@ -1160,7 +1163,7 @@ plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
 
 cairo_ps(file = "CIRF_gamma1.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
 g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
 
 grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
              plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
@@ -1423,7 +1426,7 @@ plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
 
 cairo_ps(file = "CIRF_gamma10.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
 g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
 
 grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
              plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
@@ -1439,7 +1442,10 @@ dev.off()
 
 data <- paneldata %>% dplyr::select(id,month,infla_energy,infla_overall,d,d1,d2,it,diff_fx,oilprice_shock,gasprice_shock,exp_to_gdp)
 data <- pdata.frame(data, index = c("id", "month"))
-
+data <- data %>% rename(cross_id = id)
+data <- data %>% rename(date_id = month)
+data <- pdata.frame(data, index = c("cross_id", "date_id"))
+       
 #WTI 
 
 shock_energy <- lp_nl_panel(
@@ -1693,7 +1699,7 @@ plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
 
 cairo_ps(file = "CIRF_dummy.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
 g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]] 
 
 grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
              plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
