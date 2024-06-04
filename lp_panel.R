@@ -814,7 +814,7 @@ plot1 <- ggplot(cshock_energy_pos_long, aes(x = time, group = regime)) +
   geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
   geom_line(aes(y = mean, color = regime), size = 1) +
   labs(
-    title = "Positive crude oil shock",
+    title = "Positive natural gas shock",
     x = "Horizon",
     y = "Energy inflation (%)"
   ) +
@@ -835,7 +835,7 @@ plot2 <- ggplot(cshock_energy_neg_long, aes(x = time, group = regime)) +
   geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
   geom_line(aes(y = mean, color = regime), size = 1) +
   labs(
-    title = "Negative crude oil shock",
+    title = "Negative natural gas shock",
     x = "Horizon",
     y = "Energy inflation (%)"
   ) +
@@ -856,7 +856,7 @@ plot3 <- ggplot(cshock_overall_pos_long, aes(x = time, group = regime)) +
   geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
   geom_line(aes(y = mean, color = regime), size = 1) +
   labs(
-    title = "Positive crude oil shock",
+    title = "Positive natural gas shock",
     x = "Horizon",
     y = "Headline inflation (%)"
   ) +
@@ -877,7 +877,7 @@ plot4 <- ggplot(cshock_overall_neg_long, aes(x = time, group = regime)) +
   geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
   geom_line(aes(y = mean, color = regime), size = 1) +
   labs(
-    title = "Negative crude oil shock",
+    title = "Negative natural gas shock",
     x = "Horizon",
     y = "Headline inflation (%)"
   ) +
