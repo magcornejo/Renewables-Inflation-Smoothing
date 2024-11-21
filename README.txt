@@ -17,7 +17,8 @@ This project is designed to be executed in R Studio.
 
 Notes regarding reproducibility:
 
-We suggest you run script files "svar.R" to get the structural shocks and 
+We suggest you run script files "svar.R" to get the structural shocks, "panel_stats.R"
+to perform panel unit root tests and calculate summary statistics, and 
 "lp_panel.R" to obtain the local projections and reproduce the results in the paper. 
 
 If you wish to contact to the authors redarging this project, please reach out to 
@@ -28,19 +29,21 @@ Prof. Magdalena Cornejo (mcornejo@utdt.edu).
 # B. Description of data files
 ################################################################################
 
-Folder path		Description
+Folder path				Description
 
-../data1		Raw datasets
-../data2		Intermediate data files
+../data1				Raw datasets
+../data2				Intermediate data files
 
-File Name		Description
+File Name				Description
 
-crude_oil.xlsx		Raw dataset for crude oil SVAR estimation
-natural_gas.xlsx	Raw dataset for natural gas SVAR estimation
-panel_data.xlsx		Raw dataset for panel local projections estimation
-expenditure.xlsx  	Raw dataset with government expenditure to GDP ratio
-oil_shocks.csv		Intermediate data file with crude oil structural shocks
-gas_shocks.csv         	Intermediate data file with natural gas structural shocks
+crude_oil.xlsx				Raw dataset for crude oil SVAR estimation
+natural_gas.xlsx			Raw dataset for natural gas SVAR estimation
+electricity_generation.xlsx		Raw dataset for electricity generation by source in LAC
+electricity_generation_by_country.xlsx	Raw dataset for electricity generation by source in each LAC country
+panel_data.xlsx				Raw dataset for panel local projections estimation
+expenditure.xlsx  			Raw dataset with government expenditure to GDP ratio
+oil_shocks.csv				Intermediate data file with crude oil structural shocks
+gas_shocks.csv         			Intermediate data file with natural gas structural shocks
 
 
 ################################################################################
@@ -52,12 +55,17 @@ gas_shocks.csv         	Intermediate data file with natural gas structural shock
 Performs Structural VAR estimations for crude oil and natural gas markets
 to identify the structural shocks on prices that will be used for the panel VAR.
 
-Figures 1, A1 and A2 are obtained.
+Figures 1, 2, A1 and A2, and the top panel of Table A3 are obtained.
+
+- panel_stats.R
+Reports panel unit root tests and summary statistics.
+
+The bottom panel of Table A2, and Table A3 are obtained.
 
 - lp_panel.R
 Calculates and plots the local projections 
 
-Figures 2, 3, 4, 5, A3, A4 and A5 are obtained.
+Figures 3 to 9, and A3 to A8 are obtained.
 
 
 MIT License
