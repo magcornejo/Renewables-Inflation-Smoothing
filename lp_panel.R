@@ -3,12 +3,11 @@
 #===============================================================================
 
 #===============================================================================
-# 1). Preliminary ------
+# 0). Preliminary ------
 #===============================================================================
 
+rm(list = ls())
 
-# Clean up workspace
-rm(list=ls())
 
 # Load packages
 wants <- c("panelvar","dplyr","plm","lpirfs","openxlsx","readxl","ggplot2","gridExtra","grid")
@@ -21,1690 +20,2186 @@ require("parallel") # base package
 # Directories
 dir <- list()
 dir$root <- dirname(getwd())
-dir$data1 <- paste0(dir$root,"/data1")
-dir$data2 <- paste0(dir$root,"/data2")
+dir$data1 <- paste0(dir$root, "/data1")
+dir$data2 <- paste0(dir$root, "/data2")
+dir$figures <- paste0(dir$root,"/figures")
+
+
+#===============================================================================
+# 1). Electricity generation by source in LAC ------
+#===============================================================================
+
+electricity <- read_xlsx(paste0(dir$data1, "/electricity_generation.xlsx"), sheet = "Sheet2")
+electricity_bycountry <- read_xlsx(paste0(dir$data1, "/electricity_generation_by_country.xlsx"), sheet = "Hoja2")
+
+elec_long <- t(electricity)
+elec_long <- elec_long[2:23,]
+data <- rbind(
+  cbind(elec_long[,1], type = "Hydro", time = seq(2000,2021)),
+  cbind(elec_long[,2], type = "Wind", time = seq(2000,2021)),
+  cbind(elec_long[,3], type = "Solar", time = seq(2000,2021)),
+  cbind(elec_long[,4], type = "Geothermal", time = seq(2000,2021)),
+  cbind(elec_long[,5], type = "Renewable thermal", time = seq(2000,2021)),
+  cbind(elec_long[,6], type = "Non-renewable thermal", time = seq(2000,2021)),
+  cbind(elec_long[,7], type = "Nuclear", time = seq(2000,2021)),
+  cbind(elec_long[,8], type = "Other", time = seq(2000,2021))
+)
+
+
+data <- as.data.frame(data)
+data$type <- factor(data$type, levels = c("Hydro", "Wind", "Solar", "Geothermal", "Renewable thermal", "Non-renewable thermal", "Nuclear", "Other")) 
+custom_colors <- c("Hydro" = "#3399FF", "Wind" = "#22BB33", "Solar" = "#FFFF00", "Geothermal" = "#996633", "Renewable thermal" = "#008830", "Non-renewable thermal" = "#999999", "Nuclear" = "#FF99CC", "Other" = "#003300" )
+plot1 <- ggplot(data, aes(x=as.numeric(time), y=as.numeric(V1), fill=type)) + 
+  geom_area() +
+  theme_classic() +
+  labs(x = "", y = "%", title = "(b) LAC (2005-2021)") +
+  theme(axis.text=element_text(size=14),
+        axis.title=element_text(size=14,face="bold"),
+        legend.text=element_text(size=14),
+        legend.title=element_blank()) +
+  scale_fill_manual(values = custom_colors)
+
+electricity_long <- pivot_longer(electricity_bycountry, 
+                                 cols = -Country, 
+                                 names_to = "Source", 
+                                 values_to = "Proportion")
+
+electricity_long$Proportion <- electricity_long$Proportion * 100
+
+electricity_long$Source <- factor(electricity_long$Source, 
+                                  levels = rev(c("Hydro", "Wind", "Solar", "Geothermal", "Renewable thermal", "Non-renewable thermal", "Nuclear")))
+
+custom_colors <- c("Hydro" = "#3399FF", "Wind" = "#22BB33", "Solar" = "#FFFF00", 
+                   "Geothermal" = "#996633", "Renewable thermal" = "#008830", 
+                   "Non-renewable thermal" = "#999999", "Nuclear" = "#FF99CC")
+
+electricity_long$Country <- factor(electricity_long$Country, levels = rev(electricity_bycountry$Country))
+
+plot2 <- ggplot(electricity_long, aes(x = Proportion, y = Country, fill = Source)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "", y = "", title = "(a) By country (2005-2021)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 14),
+        axis.title = element_text(size = 14, face = "bold")) +
+  scale_fill_manual(values = custom_colors) +
+  scale_x_continuous(labels = scales::percent) # Optional: format x-axis as percentage
+
+
+setwd(dir$figures)
+cairo_ps(file = "figure3.eps", onefile = FALSE, fallback_resolution = 600, width = 11, height = 4)
+plot_grid(plot2,plot1, align = 'h', ncol = 2, rel_widths = c(0.4,0.6))
+dev.off()
+
+#===============================================================================
+# 2). Local projections (with gamma=3) ------ a quite smooth transition
+#==============================================================================
 
 # Import data
-paneldata <- read_xlsx(paste0(dir$data1,"/panel_data.xlsx"))
-oil_shocks <- read.csv(paste0(dir$data2,"/oil_shocks.csv"))
-gas_shocks <- read.csv(paste0(dir$data2,"/gas_shocks.csv"))
-exp <- read_xlsx(paste0(dir$data1,"/expenditure.xlsx"))
+paneldata <- read_xlsx(paste0(dir$data1, "/panel_data.xlsx"))
+oil_shocks <- read.csv(paste0(dir$data2, "/oil_shocks.csv"))
+gas_shocks <- read.csv(paste0(dir$data2, "/gas_shocks.csv"))
+exp <- read_xlsx(paste0(dir$data1, "/expenditure.xlsx"))
 
 # Data transformation
 country_mapping <- c(
-  "Argentina" = 1,
-  "Barbados" = 2,
-  "Bolivia" = 3,
-  "Brazil" = 4,
-  "Chile" = 5,
-  "Colombia" = 6,
-  "Costa Rica" = 7,
-  "Ecuador" = 8,
-  "El Salvador" = 9,
-  "Guatemala" = 10,
-  "Honduras" = 11,
-  "Jamaica" = 12,
-  "Mexico" = 13,
-  "Nicaragua" = 14,
-  "Panama" = 15,
-  "Paraguay" = 16,
-  "Peru" = 17,
-  "Trinidad and Tobago" = 18,
-  "Uruguay" = 19
+  "Argentina" = 1, "Barbados" = 2, "Bolivia" = 3, "Brazil" = 4, "Chile" = 5,
+  "Colombia" = 6, "Costa Rica" = 7, "Ecuador" = 8, "El Salvador" = 9,
+  "Guatemala" = 10, "Honduras" = 11, "Jamaica" = 12, "Mexico" = 13,
+  "Nicaragua" = 14, "Panama" = 15, "Paraguay" = 16, "Peru" = 17,
+  "Trinidad and Tobago" = 18, "Uruguay" = 19
 )
 paneldata$id <- country_mapping[paneldata$country]
 paneldata$id <- as.numeric(paneldata$id)
+paneldata <- paneldata %>% filter(id != 1)
 
-paneldata <- paneldata %>% filter(id!=1) # Remove Argentina
+paneldata <- paneldata %>% group_by(id)  %>% mutate(infla_energy = log(cpi_energy/dplyr::lag(cpi_energy, 1)) * 100)
+paneldata <- paneldata %>% group_by(id)  %>% mutate(infla_overall = log(cpi_overall/dplyr::lag(cpi_overall, 1)) * 100)
+paneldata <- paneldata %>% mutate(z = (renew_lastyear - mean(renew_lastyear, na.rm = TRUE)) / sd(renew_lastyear, na.rm = TRUE))
 
-# generate z variable (standardized renewable share)
-paneldata <- paneldata %>% group_by(id)  %>% mutate(infla_energy=log(cpi_energy/dplyr::lag(cpi_energy,1))*100)
-paneldata <- paneldata %>% group_by(id)  %>% mutate(infla_overall=log(cpi_overall/dplyr::lag(cpi_overall,1))*100)
-paneldata <- paneldata %>% mutate(z=(renew_lastyear-mean(renew_lastyear, na.rm=T))/sd(renew_lastyear, na.rm = T))
-
-# average share oil import (delta average)
-meanshare <- mean(paneldata$fuel_imports, na.rm=T)/100 
-
-paneldata$month <- rep(seq(as.Date("2005/1/1"), as.Date("2021/12/1"), "month"),18)
+paneldata$month <- rep(seq(as.Date("2005/1/1"), as.Date("2021/12/1"), "month"), 18)
 
 # Merge shocks data
-paneldata <- merge(paneldata, oil_shocks, by = "month", all.x = TRUE)
-paneldata <- merge(paneldata, gas_shocks, by = "month", all.x = TRUE)
+oil_shocks$month <- as.Date(oil_shocks$month)
+gas_shocks$month <- as.Date(gas_shocks$month)
+paneldata <- left_join(paneldata, oil_shocks, by = "month", relationship = "many-to-one")
+paneldata <- left_join(paneldata, gas_shocks, by = "month", relationship = "many-to-one")
 
 # Merge government expenditure data
-paneldata$year <- substring(paneldata$month,1,4)
-paneldata$year <- as.numeric(paneldata$year)
+paneldata$year <- as.numeric(substring(paneldata$month, 1, 4))
 exp$year <- exp$año
 exp$country <- exp$pais
-paneldata <- left_join(paneldata,exp, by = c("country","year"))
+paneldata <- left_join(paneldata, exp, by = c("country", "year"))
 
-
-data <- paneldata %>% dplyr::select(id,month,infla_energy,infla_overall,z,it,diff_fx,oilprice_shock,gasprice_shock,exp_to_gdp)
+data <- paneldata %>% dplyr::select(id, month, infla_energy, infla_overall, z, it, diff_fx, oilsupply_shock, gassupply_shock, exp_to_gdp, oildemand_shock, gasdemand_shock, oilprice_shock, gasprice_shock, fuel_imports, d)
 data <- pdata.frame(data, index = c("id", "month"))
 
+# Define the different shocks for the three iterations
 
-# Plotting renewable electricity generation
-
-annual <- paneldata %>% group_by(year,country) %>% summarise(mean_renew=mean(renewables, na.rm = T))
-
-
-cairo_ps(file = "renewables.eps", onefile = FALSE, fallback_resolution = 600, width = 12, height = 6)
-ggplot(data = annual, aes(x = year, y = mean_renew, group = country)) +
-  geom_line() +
-  scale_x_discrete(breaks = seq(2005, 2021, by = 5)) +
-  facet_wrap(~ country, ncol = 6) +
-  theme(panel.spacing.x = unit(10, "mm")) +
-  theme_minimal() +  
-  theme(legend.position = "none", axis.title.x = element_blank(),
-        axis.title.y = element_blank(), strip.text = element_text(size = 11))
-dev.off() 
-
-data <- data %>% rename(cross_id = id)
-data <- data %>% rename(date_id = month)
-data <- pdata.frame(data, index = c("cross_id", "date_id"))
-       
-#===============================================================================
-# 2). Local projections (with gamma=5) ------
-#===============================================================================
-
-#WTI 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
 )
 
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
 
 
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
+####################################################################################
+#################################ENERGY INFLATION ##################################
+###################################################################################
+
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Energy Inflation)
+  shock_energy <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_energy",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 3,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for energy inflation
+  cshock_energy <- rbind(
+    cumsum(shock_energy$irf_s1_mean),
+    cumsum(shock_energy$irf_s1_low),
+    cumsum(shock_energy$irf_s1_up),
+    cumsum(shock_energy$irf_s2_mean),
+    cumsum(shock_energy$irf_s2_low),
+    cumsum(shock_energy$irf_s2_up)
+  )
+  cshock_energy <- t(cshock_energy)
+  cshock_energy <- as.data.frame(cshock_energy)
+  cshock_energy$Time <- seq(1, 12)
+  
+  colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_energy_long <- rbind(
+    cbind(cshock_energy[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_energy[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for energy inflation without a legend
+  plot_no_legend <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1.6, 1.6) +
+    geom_hline(yintercept = 0)
+  
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            panel.background = element_blank(),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank(),
+            legend.text = element_text(size = 18),
+            legend.title = element_text(size = 18) 
+      )
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
 )
 
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign title
+    theme(
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(size = 18),    # Larger title size
+      legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
 
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
 
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "low", time = seq(1,18))
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Energy Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
 )
 
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "low", time = seq(1,18))
+# Figure 4
+ggsave(
+  filename = "Energy_shocks.png",   # Output filename
+  plot = combined_plot,             # Combined plot object
+  width = 14,                       # Width in inches
+  height = 12,                      # Height in inches
+  dpi = 300                         # Resolution at 300 DPI for high quality
 )
 
 
-plot1 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.3,0.3) +
-  geom_hline(yintercept=0)
-
-plot2 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.3,0.3) +
-  geom_hline(yintercept=0)
 
 
-#GAS 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
+
+####################################################################################
+#################################HEADLINE INFLATION ##################################
+###################################################################################
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
 )
 
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
 
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Headline Inflation)
+  shock_overall <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_overall",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_overall","infla_energy","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 3,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for headline inflation
+  cshock_overall <- rbind(
+    cumsum(shock_overall$irf_s1_mean),
+    cumsum(shock_overall$irf_s1_low),
+    cumsum(shock_overall$irf_s1_up),
+    cumsum(shock_overall$irf_s2_mean),
+    cumsum(shock_overall$irf_s2_low),
+    cumsum(shock_overall$irf_s2_up)
+  )
+  cshock_overall <- t(cshock_overall)
+  cshock_overall <- as.data.frame(cshock_overall)
+  cshock_overall$Time <- seq(1, 12)
+
+  colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_overall_long <- rbind(
+    cbind(cshock_overall[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_overall[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for overall inflation without a legend
+  plot_no_legend <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1, 1) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            panel.background = element_blank(),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank(),
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18) 
+      )
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
 )
 
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
 
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
 
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "low", time = seq(1,18))
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Headline Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
 )
 
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "low", time = seq(1,18))
+# Figure 5
+ggsave(
+  filename = "Headline_shocks.png",   # Output filename
+  plot = combined_plot,               # Combined plot object
+  width = 16,                         # Width in inches
+  height = 12,                        # Height in inches
+  dpi = 300                           # Resolution at 300 DPI for high quality
 )
-     
-
-plot3 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.3,0.3) +
-  geom_hline(yintercept=0)
-
-plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.3,0.3) +
-  geom_hline(yintercept=0)
-                      
-
-
-
-cairo_ps(file = "CIRF.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
-
-g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
-
-grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
-             plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
-             ncol=2)
-dev.off()
-
-
-
-
-#
-
-#===============================================================================
-# 3). Asymmetric local projections (with gamma=5) ------
-#===============================================================================
-
-#WTI 
-data$oilshock_pos <- ifelse(data$oilprice_shock>0,data$oilprice_shock,0)
-data$oilshock_neg <- ifelse(data$oilprice_shock<0,abs(data$oilprice_shock),0)
-
-shock_energy_pos <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "oilshock_pos",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy_pos$irf_s1_mean <- shock_energy_pos$irf_s1_mean*meanshare
-shock_energy_pos$irf_s1_low <- shock_energy_pos$irf_s1_low*meanshare
-shock_energy_pos$irf_s1_up <- shock_energy_pos$irf_s1_up*meanshare
-shock_energy_pos$irf_s2_mean <- shock_energy_pos$irf_s2_mean*meanshare
-shock_energy_pos$irf_s2_low <- shock_energy_pos$irf_s2_low*meanshare
-shock_energy_pos$irf_s2_up <- shock_energy_pos$irf_s2_up*meanshare
-
-
-shock_energy_neg <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "oilshock_neg",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy_neg$irf_s1_mean <- shock_energy_neg$irf_s1_mean*meanshare
-shock_energy_neg$irf_s1_low <- shock_energy_neg$irf_s1_low*meanshare
-shock_energy_neg$irf_s1_up <- shock_energy_neg$irf_s1_up*meanshare
-shock_energy_neg$irf_s2_mean <- shock_energy_neg$irf_s2_mean*meanshare
-shock_energy_neg$irf_s2_low <- shock_energy_neg$irf_s2_low*meanshare
-shock_energy_neg$irf_s2_up <- shock_energy_neg$irf_s2_up*meanshare
-
-
-
-shock_overall_pos <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "oilshock_pos",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall_pos$irf_s1_mean <- shock_overall_pos$irf_s1_mean*meanshare
-shock_overall_pos$irf_s1_low <- shock_overall_pos$irf_s1_low*meanshare
-shock_overall_pos$irf_s1_up <- shock_overall_pos$irf_s1_up*meanshare
-shock_overall_pos$irf_s2_mean <- shock_overall_pos$irf_s2_mean*meanshare
-shock_overall_pos$irf_s2_low <- shock_overall_pos$irf_s2_low*meanshare
-shock_overall_pos$irf_s2_up <- shock_overall_pos$irf_s2_up*meanshare
-
-
-shock_overall_neg <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "oilshock_neg",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall_neg$irf_s1_mean <- shock_overall_neg$irf_s1_mean*meanshare
-shock_overall_neg$irf_s1_low <- shock_overall_neg$irf_s1_low*meanshare
-shock_overall_neg$irf_s1_up <- shock_overall_neg$irf_s1_up*meanshare
-shock_overall_neg$irf_s2_mean <- shock_overall_neg$irf_s2_mean*meanshare
-shock_overall_neg$irf_s2_low <- shock_overall_neg$irf_s2_low*meanshare
-shock_overall_neg$irf_s2_up <- shock_overall_neg$irf_s2_up*meanshare
-
-
-# Plot cumulative IRF
-cshock_energy_pos <- rbind(cumsum(shock_energy_pos$irf_s1_mean),cumsum(shock_energy_pos$irf_s1_low),cumsum(shock_energy_pos$irf_s1_up),cumsum(shock_energy_pos$irf_s2_mean),cumsum(shock_energy_pos$irf_s2_low),cumsum(shock_energy_pos$irf_s2_up))
-cshock_energy_pos <- t(cshock_energy_pos)
-cshock_energy_pos <- as.data.frame(cshock_energy_pos)
-cshock_energy_pos$Time <- seq(1,18)
-colnames(cshock_energy_pos) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-cshock_energy_neg <- rbind(cumsum(shock_energy_neg$irf_s1_mean),cumsum(shock_energy_neg$irf_s1_low),cumsum(shock_energy_neg$irf_s1_up),cumsum(shock_energy_neg$irf_s2_mean),cumsum(shock_energy_neg$irf_s2_low),cumsum(shock_energy_neg$irf_s2_up))
-cshock_energy_neg <- t(cshock_energy_neg)
-cshock_energy_neg <- as.data.frame(cshock_energy_neg)
-cshock_energy_neg$Time <- seq(1,18)
-colnames(cshock_energy_neg) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-cshock_overall_pos <- rbind(cumsum(shock_overall_pos$irf_s1_mean),cumsum(shock_overall_pos$irf_s1_low),cumsum(shock_overall_pos$irf_s1_up),cumsum(shock_overall_pos$irf_s2_mean),cumsum(shock_overall_pos$irf_s2_low),cumsum(shock_overall_pos$irf_s2_up))
-cshock_overall_pos <- t(cshock_overall_pos)
-cshock_overall_pos <- as.data.frame(cshock_overall_pos)
-cshock_overall_pos$Time <- seq(1,18)
-colnames(cshock_overall_pos) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-cshock_overall_neg <- rbind(cumsum(shock_overall_neg$irf_s1_mean),cumsum(shock_overall_neg$irf_s1_low),cumsum(shock_overall_neg$irf_s1_up),cumsum(shock_overall_neg$irf_s2_mean),cumsum(shock_overall_neg$irf_s2_low),cumsum(shock_overall_neg$irf_s2_up))
-cshock_overall_neg <- t(cshock_overall_neg)
-cshock_overall_neg <- as.data.frame(cshock_overall_neg)
-cshock_overall_neg$Time <- seq(1,18)
-colnames(cshock_overall_neg) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-colnames(cshock_energy_pos) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_pos_long <- rbind(
-  cbind(cshock_energy_pos[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy_pos[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_energy_neg) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_neg_long <- rbind(
-  cbind(cshock_energy_neg[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy_neg[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_overall_pos) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_pos_long <- rbind(
-  cbind(cshock_overall_pos[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall_pos[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_overall_neg) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_neg_long <- rbind(
-  cbind(cshock_overall_neg[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall_neg[,4:6], regime = "low", time = seq(1,18))
-)
-
-plot1 <- ggplot(cshock_energy_pos_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Positive crude oil shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center", panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-plot2 <- ggplot(cshock_energy_neg_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Negative crude oil shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-plot3 <- ggplot(cshock_overall_pos_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Positive crude oil shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-plot4 <- ggplot(cshock_overall_neg_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Negative crude oil shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-cairo_ps(file = "CIRF_oil_asym.eps", onefile = FALSE, fallback_resolution = 600)
-g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
-
-grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
-             plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
-             ncol=2)
-dev.off()
-
-
-# GAS 
-data$gasshock_pos <- ifelse(data$gasprice_shock>0,data$gasprice_shock,0)
-data$gasshock_neg <- ifelse(data$gasprice_shock<0,abs(data$gasprice_shock),0)
-
-shock_energy_pos <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "gasshock_pos",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy_pos$irf_s1_mean <- shock_energy_pos$irf_s1_mean*meanshare
-shock_energy_pos$irf_s1_low <- shock_energy_pos$irf_s1_low*meanshare
-shock_energy_pos$irf_s1_up <- shock_energy_pos$irf_s1_up*meanshare
-shock_energy_pos$irf_s2_mean <- shock_energy_pos$irf_s2_mean*meanshare
-shock_energy_pos$irf_s2_low <- shock_energy_pos$irf_s2_low*meanshare
-shock_energy_pos$irf_s2_up <- shock_energy_pos$irf_s2_up*meanshare
-
-
-shock_energy_neg <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "gasshock_neg",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy_neg$irf_s1_mean <- shock_energy_neg$irf_s1_mean*meanshare
-shock_energy_neg$irf_s1_low <- shock_energy_neg$irf_s1_low*meanshare
-shock_energy_neg$irf_s1_up <- shock_energy_neg$irf_s1_up*meanshare
-shock_energy_neg$irf_s2_mean <- shock_energy_neg$irf_s2_mean*meanshare
-shock_energy_neg$irf_s2_low <- shock_energy_neg$irf_s2_low*meanshare
-shock_energy_neg$irf_s2_up <- shock_energy_neg$irf_s2_up*meanshare
-
-
-
-shock_overall_pos <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "gasshock_pos",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall_pos$irf_s1_mean <- shock_overall_pos$irf_s1_mean*meanshare
-shock_overall_pos$irf_s1_low <- shock_overall_pos$irf_s1_low*meanshare
-shock_overall_pos$irf_s1_up <- shock_overall_pos$irf_s1_up*meanshare
-shock_overall_pos$irf_s2_mean <- shock_overall_pos$irf_s2_mean*meanshare
-shock_overall_pos$irf_s2_low <- shock_overall_pos$irf_s2_low*meanshare
-shock_overall_pos$irf_s2_up <- shock_overall_pos$irf_s2_up*meanshare
-
-
-shock_overall_neg <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "gasshock_neg",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  lag_switching = TRUE,
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall_neg$irf_s1_mean <- shock_overall_neg$irf_s1_mean*meanshare
-shock_overall_neg$irf_s1_low <- shock_overall_neg$irf_s1_low*meanshare
-shock_overall_neg$irf_s1_up <- shock_overall_neg$irf_s1_up*meanshare
-shock_overall_neg$irf_s2_mean <- shock_overall_neg$irf_s2_mean*meanshare
-shock_overall_neg$irf_s2_low <- shock_overall_neg$irf_s2_low*meanshare
-shock_overall_neg$irf_s2_up <- shock_overall_neg$irf_s2_up*meanshare
-
-
-# Plot cumulative IRF
-cshock_energy_pos <- rbind(cumsum(shock_energy_pos$irf_s1_mean),cumsum(shock_energy_pos$irf_s1_low),cumsum(shock_energy_pos$irf_s1_up),cumsum(shock_energy_pos$irf_s2_mean),cumsum(shock_energy_pos$irf_s2_low),cumsum(shock_energy_pos$irf_s2_up))
-cshock_energy_pos <- t(cshock_energy_pos)
-cshock_energy_pos <- as.data.frame(cshock_energy_pos)
-cshock_energy_pos$Time <- seq(1,18)
-colnames(cshock_energy_pos) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-cshock_energy_neg <- rbind(cumsum(shock_energy_neg$irf_s1_mean),cumsum(shock_energy_neg$irf_s1_low),cumsum(shock_energy_neg$irf_s1_up),cumsum(shock_energy_neg$irf_s2_mean),cumsum(shock_energy_neg$irf_s2_low),cumsum(shock_energy_neg$irf_s2_up))
-cshock_energy_neg <- t(cshock_energy_neg)
-cshock_energy_neg <- as.data.frame(cshock_energy_neg)
-cshock_energy_neg$Time <- seq(1,18)
-colnames(cshock_energy_neg) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-cshock_overall_pos <- rbind(cumsum(shock_overall_pos$irf_s1_mean),cumsum(shock_overall_pos$irf_s1_low),cumsum(shock_overall_pos$irf_s1_up),cumsum(shock_overall_pos$irf_s2_mean),cumsum(shock_overall_pos$irf_s2_low),cumsum(shock_overall_pos$irf_s2_up))
-cshock_overall_pos <- t(cshock_overall_pos)
-cshock_overall_pos <- as.data.frame(cshock_overall_pos)
-cshock_overall_pos$Time <- seq(1,18)
-colnames(cshock_overall_pos) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-cshock_overall_neg <- rbind(cumsum(shock_overall_neg$irf_s1_mean),cumsum(shock_overall_neg$irf_s1_low),cumsum(shock_overall_neg$irf_s1_up),cumsum(shock_overall_neg$irf_s2_mean),cumsum(shock_overall_neg$irf_s2_low),cumsum(shock_overall_neg$irf_s2_up))
-cshock_overall_neg <- t(cshock_overall_neg)
-cshock_overall_neg <- as.data.frame(cshock_overall_neg)
-cshock_overall_neg$Time <- seq(1,18)
-colnames(cshock_overall_neg) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-colnames(cshock_energy_pos) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_pos_long <- rbind(
-  cbind(cshock_energy_pos[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy_pos[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_energy_neg) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_neg_long <- rbind(
-  cbind(cshock_energy_neg[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy_neg[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_overall_pos) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_pos_long <- rbind(
-  cbind(cshock_overall_pos[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall_pos[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_overall_neg) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_neg_long <- rbind(
-  cbind(cshock_overall_neg[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall_neg[,4:6], regime = "low", time = seq(1,18))
-)
-
-plot1 <- ggplot(cshock_energy_pos_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Positive natural gas shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-plot2 <- ggplot(cshock_energy_neg_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Negative natural gas shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-plot3 <- ggplot(cshock_overall_pos_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Positive natural gas shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-
-plot4 <- ggplot(cshock_overall_neg_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Negative natural gas shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  ylim(-0.5,0.6) +
-  geom_hline(yintercept=0)
-
-cairo_ps(file = "CIRF_gas_asym.eps", onefile = FALSE, fallback_resolution = 600)
-g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
-
-grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
-             plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
-             ncol=2)
-dev.off()
 
 
 
 #===============================================================================
-# 4). Robustness ------
+# 3). Local projections - Asymmetries
+#===============================================================================
+
+####################################################################################
+#################################ENERGY INFLATION  positive shock ##################################
+###################################################################################
+
+data$price_OIL_pos <- ifelse(data$oilprice_shock>0,data$oilprice_shock,0)
+data$supply_OIL_pos <- ifelse(data$oilsupply_shock>0,data$oilsupply_shock,0)
+data$demand_OIL_pos <- ifelse(data$oildemand_shock>0,data$oildemand_shock,0)
+data$price_GAS_pos <- ifelse(data$gasprice_shock>0,data$gasprice_shock,0)
+data$supply_GAS_pos <- ifelse(data$gassupply_shock>0,data$gassupply_shock,0)
+data$demand_GAS_pos <- ifelse(data$gasdemand_shock>0,data$gasdemand_shock,0)
+
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL_pos = list(shock = "price_OIL_pos", file_name = "CIRF_price_oil"),
+  supply_OIL_pos = list(shock = "supply_OIL_pos",  file_name = "CIRF_supply_oil"),
+  demand_OIL_pos = list(shock = "demand_OIL_pos", file_name = "CIRF_demand_oil"),
+  price_GAS_pos = list(shock = "price_GAS_pos", file_name = "CIRF_price_gas") ,
+  supply_GAS_pos = list(shock = "supply_GAS_pos", file_name = "CIRF_supply_gas"),
+  demand_GAS_pos = list(shock = "demand_GAS_pos", file_name = "CIRF_demand_gas")
+)
+
+
+
+
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Energy Inflation)
+  shock_energy <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_energy",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 3,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for energy inflation
+  cshock_energy <- rbind(
+    cumsum(shock_energy$irf_s1_mean),
+    cumsum(shock_energy$irf_s1_low),
+    cumsum(shock_energy$irf_s1_up),
+    cumsum(shock_energy$irf_s2_mean),
+    cumsum(shock_energy$irf_s2_low),
+    cumsum(shock_energy$irf_s2_up)
+  )
+  cshock_energy <- t(cshock_energy)
+  cshock_energy <- as.data.frame(cshock_energy)
+  cshock_energy$Time <- seq(1, 12)
+  
+  colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_energy_long <- rbind(
+    cbind(cshock_energy[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_energy[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for energy inflation without a legend
+  plot_no_legend <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-3, 3) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), # Ajusta el tamaño del texto de la leyenda a 18
+            legend.title = element_text(size = 18)
+      ) +# Ajusta el tamaño del título de la leyenda a 18 (si hay título)
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-2.5, 3) +
+      geom_hline(yintercept = 0)  
+  }
+}
+
+
+
+# Define improved titles for the plots
+plot_titles <- c(
+  supply_OIL_pos = "Oil supply shock",
+  demand_OIL_pos = "Oil demand shock",
+  price_OIL_pos = "Oil price shock",
+  supply_GAS_pos = "Gas supply shock",
+  demand_GAS_pos = "Gas demand shock",
+  price_GAS_pos = "Gas price shock"
+)
+
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
+
+
+# Extract the legend from the first plot (for shared legend across all plots)
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Arrange the combined plot with shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Energy Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure 6
+ggsave(
+  filename = "Energy_shocks_pos.png",  # Output filename with .png extension
+  plot = combined_plot,                # Combined plot object
+  width = 16,                          # Width of the image (in inches)
+  height = 12,                         # Height of the image (in inches)
+  dpi = 300
+)
+
+####################################################################################
+#################################ENERGY INFLATION  NEGATIVE shock ##################################
+###################################################################################
+
+data$price_OIL_neg <- ifelse(data$oilprice_shock<0,abs(data$oilprice_shock),0)
+data$supply_OIL_neg <- ifelse(data$oilsupply_shock<0,abs(data$oilsupply_shock),0)
+data$demand_OIL_neg <- ifelse(data$oildemand_shock<0,abs(data$oildemand_shock),0)
+data$price_GAS_neg <- ifelse(data$gasprice_shock<0,abs(data$gasprice_shock),0)
+data$supply_GAS_neg <- ifelse(data$gassupply_shock<0,abs(data$gassupply_shock),0)
+data$demand_GAS_neg <- ifelse(data$gasdemand_shock<0,abs(data$gasdemand_shock),0)
+
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL_neg = list(shock = "price_OIL_neg", file_name = "CIRF_price_oil"),
+  supply_OIL_neg = list(shock = "supply_OIL_neg",  file_name = "CIRF_supply_oil"),
+  demand_OIL_neg = list(shock = "demand_OIL_neg", file_name = "CIRF_demand_oil"),
+  price_GAS_neg = list(shock = "price_GAS_neg", file_name = "CIRF_price_gas") ,
+  supply_GAS_neg = list(shock = "supply_GAS_neg", file_name = "CIRF_supply_gas"),
+  demand_GAS_neg = list(shock = "demand_GAS_neg", file_name = "CIRF_demand_gas")
+)
+
+
+
+
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Energy Inflation)
+  shock_energy <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_energy",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 3,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for energy inflation
+  cshock_energy <- rbind(
+    cumsum(shock_energy$irf_s1_mean),
+    cumsum(shock_energy$irf_s1_low),
+    cumsum(shock_energy$irf_s1_up),
+    cumsum(shock_energy$irf_s2_mean),
+    cumsum(shock_energy$irf_s2_low),
+    cumsum(shock_energy$irf_s2_up)
+  )
+  cshock_energy <- t(cshock_energy)
+  cshock_energy <- as.data.frame(cshock_energy)
+  cshock_energy$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_energy_long <- rbind(
+    cbind(cshock_energy[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_energy[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for energy inflation without a legend
+  plot_no_legend <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-3, 3) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18)
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-2.5, 3) +
+      geom_hline(yintercept = 0)  
+  }
+}
+
+
+
+# Define improved titles for the plots
+plot_titles <- c(
+  supply_OIL_neg = "Oil supply shock",
+  demand_OIL_neg = "Oil demand shock",
+  price_OIL_neg = "Oil price shock",
+  supply_GAS_neg = "Gas supply shock",
+  demand_GAS_neg = "Gas demand shock",
+  price_GAS_neg = "Gas price shock"
+)
+
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
+
+
+# Extract the legend from the first plot (for shared legend across all plots)
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Combine all plots into a single figure without individual legends, using the shared legend at the bottom
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Energy Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure 7
+ggsave(
+  filename = "Energy_shocks_neg.png",  # Output filename
+  plot = combined_plot,                # Combined plot object
+  width = 16,                          # Width of the image (in inches)
+  height = 12,                         # Height of the image (in inches)
+  dpi = 300                            # Resolution of 300 DPI (high quality)
+)
+
+####################################################################################
+#################################HEADLINE INFLATION positive shock##################
+###################################################################################
+
+
+data$price_OIL_pos <- ifelse(data$oilprice_shock>0,data$oilprice_shock,0)
+data$supply_OIL_pos <- ifelse(data$oilsupply_shock>0,data$oilsupply_shock,0)
+data$demand_OIL_pos <- ifelse(data$oildemand_shock>0,data$oildemand_shock,0)
+data$price_GAS_pos <- ifelse(data$gasprice_shock>0,data$gasprice_shock,0)
+data$supply_GAS_pos <- ifelse(data$gassupply_shock>0,data$gassupply_shock,0)
+data$demand_GAS_pos <- ifelse(data$gasdemand_shock>0,data$gasdemand_shock,0)
+
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL_pos = list(shock = "price_OIL_pos", file_name = "CIRF_price_oil"),
+  supply_OIL_pos = list(shock = "supply_OIL_pos",  file_name = "CIRF_supply_oil"),
+  demand_OIL_pos = list(shock = "demand_OIL_pos", file_name = "CIRF_demand_oil"),
+  price_GAS_pos = list(shock = "price_GAS_pos", file_name = "CIRF_price_gas") ,
+  supply_GAS_pos = list(shock = "supply_GAS_pos", file_name = "CIRF_supply_gas"),
+  demand_GAS_pos = list(shock = "demand_GAS_pos", file_name = "CIRF_demand_gas")
+)
+
+
+
+
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
+
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (overall Inflation)
+  shock_overall <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_overall",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 3,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for overall inflation
+  cshock_overall <- rbind(
+    cumsum(shock_overall$irf_s1_mean),
+    cumsum(shock_overall$irf_s1_low),
+    cumsum(shock_overall$irf_s1_up),
+    cumsum(shock_overall$irf_s2_mean),
+    cumsum(shock_overall$irf_s2_low),
+    cumsum(shock_overall$irf_s2_up)
+  )
+  cshock_overall <- t(cshock_overall)
+  cshock_overall <- as.data.frame(cshock_overall)
+  cshock_overall$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_overall_long <- rbind(
+    cbind(cshock_overall[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_overall[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for overall inflation without a legend
+  plot_no_legend <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-2, 2) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18)
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-2, 2) +
+      geom_hline(yintercept = 0)  
+  }
+}
+
+
+
+# Define improved titles for the plots
+plot_titles <- c(
+  supply_OIL_pos = "Oil supply shock",
+  demand_OIL_pos = "Oil demand shock",
+  price_OIL_pos = "Oil price shock",
+  supply_GAS_pos = "Gas supply shock",
+  demand_GAS_pos = "Gas demand shock",
+  price_GAS_pos = "Gas price shock"
+)
+
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
+
+
+# Extract the legend from the first plot (for shared legend across all plots)
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Combine all plots into a single figure without individual legends, using the shared legend at the bottom
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Headline Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure 8
+ggsave(
+  filename = "Headline_shocks_pos.png",  # Output filename
+  plot = combined_plot,                # Combined plot object
+  width = 16,                          # Width of the image (in inches)
+  height = 12,                         # Height of the image (in inches)
+  dpi = 300                            # Resolution of 300 DPI (high quality)
+)
+
+####################################################################################
+#################################HEADLINE INFLATION negative shock #################
+###################################################################################
+
+
+data$price_OIL_neg <- ifelse(data$oilprice_shock<0,abs(data$oilprice_shock),0)
+data$supply_OIL_neg <- ifelse(data$oilsupply_shock<0,abs(data$oilsupply_shock),0)
+data$demand_OIL_neg <- ifelse(data$oildemand_shock<0,abs(data$oildemand_shock),0)
+data$price_GAS_neg <- ifelse(data$gasprice_shock<0,abs(data$gasprice_shock),0)
+data$supply_GAS_neg <- ifelse(data$gassupply_shock<0,abs(data$gassupply_shock),0)
+data$demand_GAS_neg <- ifelse(data$gasdemand_shock<0,abs(data$gasdemand_shock),0)
+
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL_neg = list(shock = "price_OIL_neg", file_name = "CIRF_price_oil"),
+  supply_OIL_neg = list(shock = "supply_OIL_neg",  file_name = "CIRF_supply_oil"),
+  demand_OIL_neg = list(shock = "demand_OIL_neg", file_name = "CIRF_demand_oil"),
+  price_GAS_neg = list(shock = "price_GAS_neg", file_name = "CIRF_price_gas") ,
+  supply_GAS_neg = list(shock = "supply_GAS_neg", file_name = "CIRF_supply_gas"),
+  demand_GAS_neg = list(shock = "demand_GAS_neg", file_name = "CIRF_demand_gas")
+)
+
+
+
+
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
+
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (overall Inflation)
+  shock_overall <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_overall",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 3,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for overall inflation
+  cshock_overall <- rbind(
+    cumsum(shock_overall$irf_s1_mean),
+    cumsum(shock_overall$irf_s1_low),
+    cumsum(shock_overall$irf_s1_up),
+    cumsum(shock_overall$irf_s2_mean),
+    cumsum(shock_overall$irf_s2_low),
+    cumsum(shock_overall$irf_s2_up)
+  )
+  cshock_overall <- t(cshock_overall)
+  cshock_overall <- as.data.frame(cshock_overall)
+  cshock_overall$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_overall_long <- rbind(
+    cbind(cshock_overall[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_overall[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for overall inflation without a legend
+  plot_no_legend <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1.5, 1.5) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18)
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-1.5, 1.5) +
+      geom_hline(yintercept = 0)  
+  }
+}
+
+
+
+# Define improved titles for the plots
+plot_titles <- c(
+  supply_OIL_neg = "Oil supply shock",
+  demand_OIL_neg = "Oil demand shock",
+  price_OIL_neg = "Oil price shock",
+  supply_GAS_neg = "Gas supply shock",
+  demand_GAS_neg = "Gas demand shock",
+  price_GAS_neg = "Gas price shock"
+)
+
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
+
+# Extract the legend from the first plot (for shared legend across all plots)
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Combine all plots into a single figure without individual legends, using the shared legend at the bottom
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Headline Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure 9
+ggsave(
+  filename = "Headline_shocks_neg.png",  # Output filename
+  plot = combined_plot,                # Combined plot object
+  width = 16,                          # Width of the image (in inches)
+  height = 12,                         # Height of the image (in inches)
+  dpi = 300                            # Resolution of 300 DPI (high quality)
+)
+
+
+#===============================================================================
+# 4). Local projections (gamma = 1)
+#===============================================================================
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
+)
+
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
+
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Energy Inflation)
+  shock_energy <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_energy",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 1,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for energy inflation
+  cshock_energy <- rbind(
+    cumsum(shock_energy$irf_s1_mean),
+    cumsum(shock_energy$irf_s1_low),
+    cumsum(shock_energy$irf_s1_up),
+    cumsum(shock_energy$irf_s2_mean),
+    cumsum(shock_energy$irf_s2_low),
+    cumsum(shock_energy$irf_s2_up)
+  )
+  cshock_energy <- t(cshock_energy)
+  cshock_energy <- as.data.frame(cshock_energy)
+  cshock_energy$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_energy_long <- rbind(
+    cbind(cshock_energy[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_energy[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for energy inflation without a legend
+  plot_no_legend <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-2, 2) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18) 
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-2, 2) +
+      geom_hline(yintercept = 0)
+    
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
+)
+
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
+
+
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Energy Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure A3
+ggsave(
+  filename = "Energy_shocks_gamma1.png",   # Output filename
+  plot = combined_plot,             # Combined plot object
+  width = 16,                       # Width in inches
+  height = 12,                      # Height in inches
+  dpi = 300                         # Resolution at 300 DPI for high quality
+)
+
+
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
+)
+
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
+
+
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Headline Inflation)
+  shock_overall <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_overall",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_overall","infla_energy","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 1,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for headline inflation
+  cshock_overall <- rbind(
+    cumsum(shock_overall$irf_s1_mean),
+    cumsum(shock_overall$irf_s1_low),
+    cumsum(shock_overall$irf_s1_up),
+    cumsum(shock_overall$irf_s2_mean),
+    cumsum(shock_overall$irf_s2_low),
+    cumsum(shock_overall$irf_s2_up)
+  )
+  cshock_overall <- t(cshock_overall)
+  cshock_overall <- as.data.frame(cshock_overall)
+  cshock_overall$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_overall_long <- rbind(
+    cbind(cshock_overall[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_overall[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for overall inflation without a legend
+  plot_no_legend <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1.5, 1.5) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18) 
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-1.5, 1.5) +
+      geom_hline(yintercept = 0) 
+    
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
+)
+
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
+
+
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Headline Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure A4
+ggsave(
+  filename = "Headline_shocks_gamma1.png",   # Output filename
+  plot = combined_plot,               # Combined plot object
+  width = 16,                         # Width in inches
+  height = 12,                        # Height in inches
+  dpi = 300                           # Resolution at 300 DPI for high quality
+)
+
+#===============================================================================
+# 5). Local projections (gamma = 10)
 #===============================================================================
 
 
-# a) Sensitivity to gamma
-
-#gamma=1
-
-#WTI 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 1,
-  confint = 1.64,
-  hor = 18
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
 )
 
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
 
 
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 1,
-  confint = 1.64,
-  hor = 18
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Energy Inflation)
+  shock_energy <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_energy",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 10,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for energy inflation
+  cshock_energy <- rbind(
+    cumsum(shock_energy$irf_s1_mean),
+    cumsum(shock_energy$irf_s1_low),
+    cumsum(shock_energy$irf_s1_up),
+    cumsum(shock_energy$irf_s2_mean),
+    cumsum(shock_energy$irf_s2_low),
+    cumsum(shock_energy$irf_s2_up)
+  )
+  cshock_energy <- t(cshock_energy)
+  cshock_energy <- as.data.frame(cshock_energy)
+  cshock_energy$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_energy_long <- rbind(
+    cbind(cshock_energy[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_energy[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for energy inflation without a legend
+  plot_no_legend <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1.5, 1.5) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18),
+            legend.title = element_text(size = 18) 
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-1.5, 1.5) +
+      geom_hline(yintercept = 0)
+    
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
 )
 
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
 
 
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
 
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "low", time = seq(1,18))
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Energy Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
 )
 
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "low", time = seq(1,18))
-)
-
-
-plot1 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-plot2 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-
-#GAS 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 1,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
-
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 1,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
-
-
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "low", time = seq(1,18))
+# Figure A5
+ggsave(
+  filename = "Energy_shocks_gamma10.png",   # Output filename
+  plot = combined_plot,             # Combined plot object
+  width = 16,                       # Width in inches
+  height = 12,                      # Height in inches
+  dpi = 300                         # Resolution at 300 DPI for high quality
 )
 
 
-plot3 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
 
-plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-
-
-cairo_ps(file = "CIRF_gamma1.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
-g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
-
-grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
-             plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
-             ncol=2)
-dev.off()
-
-# gamma=10
-
-#WTI 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 10,
-  confint = 1.64,
-  hor = 18
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
 )
 
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
 
 
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 10,
-  confint = 1.64,
-  hor = 18
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Headline Inflation)
+  shock_overall <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_overall",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_overall","infla_energy","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "z",
+    use_logistic = TRUE,
+    lag_switching = FALSE,
+    gamma = 10,
+    confint = 1.645,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for headline inflation
+  cshock_overall <- rbind(
+    cumsum(shock_overall$irf_s1_mean),
+    cumsum(shock_overall$irf_s1_low),
+    cumsum(shock_overall$irf_s1_up),
+    cumsum(shock_overall$irf_s2_mean),
+    cumsum(shock_overall$irf_s2_low),
+    cumsum(shock_overall$irf_s2_up)
+  )
+  cshock_overall <- t(cshock_overall)
+  cshock_overall <- as.data.frame(cshock_overall)
+  cshock_overall$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_overall_long <- rbind(
+    cbind(cshock_overall[,1:3], regime = "high", time = seq(1,12)),
+    cbind(cshock_overall[,4:6], regime = "low", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for overall inflation without a legend
+  plot_no_legend <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1, 1) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18),
+            legend.title = element_text(size = 18) 
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-1, 1) +
+      geom_hline(yintercept = 0) 
+    
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
 )
 
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
 
 
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
 
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "low", time = seq(1,18))
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Headline Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
 )
 
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "low", time = seq(1,18))
-)
-
-
-plot1 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-plot2 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-
-#GAS 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 10,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
-
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "z",
-  use_logistic = T,
-  lag_switching = F, #it's already lagged
-  gamma = 10,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
-
-
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "low", time = seq(1,18))
-)
-
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "high", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "low", time = seq(1,18))
+# Figure A6
+ggsave(
+  filename = "Headline_shocks_gamma10.png",   # Output filename
+  plot = combined_plot,               # Combined plot object
+  width = 16,                         # Width in inches
+  height = 12,                        # Height in inches
+  dpi = 300                           # Resolution at 300 DPI for high quality
 )
 
 
-plot3 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
+#===============================================================================
+# 6). Local projections (Alternative definition of electricity transition)
+#===============================================================================
 
 
-
-cairo_ps(file = "CIRF_gamma10.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
-g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]]
-
-grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
-             plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
-             ncol=2)
-dev.off()
-
-
-
-# b) Defining a dummy variable to determine each country's current renewable environment
-#d if country mean >50
-#d1 if i,t >50
-#d2 if i,t >55 (median)
-
-data <- paneldata %>% dplyr::select(id,month,infla_energy,infla_overall,d,d1,d2,it,diff_fx,oilprice_shock,gasprice_shock,exp_to_gdp)
-data <- pdata.frame(data, index = c("id", "month"))
-data <- data %>% rename(cross_id = id)
-data <- data %>% rename(date_id = month)
-data <- pdata.frame(data, index = c("cross_id", "date_id"))
-       
-#WTI 
-
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "d",
-  use_logistic = F,
-  lag_switching = F, #it's already lagged
-  confint = 1.64,
-  hor = 18
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
 )
 
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
 
 
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "oilprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "d",
-  lag_switching = FALSE,
-  use_logistic = FALSE,
-  use_hp = FALSE,
-  confint = 1.64,
-  hor = 18
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Energy Inflation)
+  shock_energy <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_energy",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "d",
+    use_logistic = F,
+    lag_switching = FALSE,
+    confint = 1.64,
+    hor = 12
+  )
+  
+  
+  
+  # 2. Calculate cumulative IRF for energy inflation
+  cshock_energy <- rbind(
+    cumsum(shock_energy$irf_s1_mean),
+    cumsum(shock_energy$irf_s1_low),
+    cumsum(shock_energy$irf_s1_up),
+    cumsum(shock_energy$irf_s2_mean),
+    cumsum(shock_energy$irf_s2_low),
+    cumsum(shock_energy$irf_s2_up)
+  )
+  cshock_energy <- t(cshock_energy)
+  cshock_energy <- as.data.frame(cshock_energy)
+  cshock_energy$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_energy_long <- rbind(
+    cbind(cshock_energy[,1:3], regime = "low", time = seq(1,12)),
+    cbind(cshock_energy[,4:6], regime = "high", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for energy inflation without a legend
+  plot_no_legend <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1.5, 1.5) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18)
+      ) +
+      scale_x_continuous(breaks = 1:12) +
+      ylim(-1.5, 1.5) +
+      geom_hline(yintercept = 0)
+  }
+}
+
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
 )
 
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
 
 
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
 
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "low", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "high", time = seq(1,18))
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Energy Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
 )
 
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "low", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "high", time = seq(1,18))
-)
-
-
-plot1 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-plot2 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Crude oil shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
-
-
-#GAS 
-shock_energy <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_energy",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "d",
-  use_logistic = F,
-  lag_switching = F, #it's already lagged
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_energy$irf_s1_mean <- shock_energy$irf_s1_mean*meanshare
-shock_energy$irf_s1_low <- shock_energy$irf_s1_low*meanshare
-shock_energy$irf_s1_up <- shock_energy$irf_s1_up*meanshare
-shock_energy$irf_s2_mean <- shock_energy$irf_s2_mean*meanshare
-shock_energy$irf_s2_low <- shock_energy$irf_s2_low*meanshare
-shock_energy$irf_s2_up <- shock_energy$irf_s2_up*meanshare
-
-shock_overall <- lp_nl_panel(
-  data_set = data,
-  data_sample = "Full",
-  endog_data = "infla_overall",
-  cumul_mult = FALSE,
-  shock = "gasprice_shock",
-  diff_shock = FALSE,
-  panel_model = "within",
-  panel_effect = "individual",
-  robust_cov = "vcovNW",
-  c_exog_data = c("it","diff_fx","exp_to_gdp"),
-  l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
-  lags_exog_data = 12,
-  switching = "d",
-  use_logistic = F,
-  lag_switching = F, #it's already lagged
-  gamma = 5,
-  confint = 1.64,
-  hor = 18
-)
-
-shock_overall$irf_s1_mean <- shock_overall$irf_s1_mean*meanshare
-shock_overall$irf_s1_low <- shock_overall$irf_s1_low*meanshare
-shock_overall$irf_s1_up <- shock_overall$irf_s1_up*meanshare
-shock_overall$irf_s2_mean <- shock_overall$irf_s2_mean*meanshare
-shock_overall$irf_s2_low <- shock_overall$irf_s2_low*meanshare
-shock_overall$irf_s2_up <- shock_overall$irf_s2_up*meanshare
-
-
-# Plot cumulative IRF
-cshock_energy <- rbind(cumsum(shock_energy$irf_s1_mean),cumsum(shock_energy$irf_s1_low),cumsum(shock_energy$irf_s1_up),cumsum(shock_energy$irf_s2_mean),cumsum(shock_energy$irf_s2_low),cumsum(shock_energy$irf_s2_up))
-cshock_energy <- t(cshock_energy)
-cshock_energy <- as.data.frame(cshock_energy)
-cshock_energy$Time <- seq(1,18)
-colnames(cshock_energy) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-
-cshock_overall <- rbind(cumsum(shock_overall$irf_s1_mean),cumsum(shock_overall$irf_s1_low),cumsum(shock_overall$irf_s1_up),cumsum(shock_overall$irf_s2_mean),cumsum(shock_overall$irf_s2_low),cumsum(shock_overall$irf_s2_up))
-cshock_overall <- t(cshock_overall)
-cshock_overall <- as.data.frame(cshock_overall)
-cshock_overall$Time <- seq(1,18)
-colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
-
-colnames(cshock_energy) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_energy_long <- rbind(
-  cbind(cshock_energy[,1:3], regime = "low", time = seq(1,18)),
-  cbind(cshock_energy[,4:6], regime = "high", time = seq(1,18))
-)
-
-colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
-cshock_overall_long <- rbind(
-  cbind(cshock_overall[,1:3], regime = "low", time = seq(1,18)),
-  cbind(cshock_overall[,4:6], regime = "high", time = seq(1,18))
+# Figure A7
+ggsave(
+  filename = "Energy_shocks_r_2.png",   # Output filename
+  plot = combined_plot,             # Combined plot object
+  width = 16,                       # Width in inches
+  height = 12,                      # Height in inches
+  dpi = 300                         # Resolution at 300 DPI for high quality
 )
 
 
-plot3 <- ggplot(cshock_energy_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Energy inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
+# List of shocks to analyze: oil shocks and gas shocks
+shocks_list <- list(
+  price_OIL = list(shock = "oilprice_shock", file_name = "CIRF_price_oil"),
+  supply_OIL = list(shock = "oilsupply_shock",  file_name = "CIRF_supply_oil"),
+  demand_OIL = list(shock = "oildemand_shock", file_name = "CIRF_demand_oil"),
+  price_GAS = list(shock = "gasprice_shock", file_name = "CIRF_price_gas") ,
+  supply_GAS = list(shock = "gassupply_shock", file_name = "CIRF_supply_gas"),
+  demand_GAS = list(shock = "gasdemand_shock", file_name = "CIRF_demand_gas")
+)
 
-plot4 <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
-  geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
-  geom_line(aes(y = mean, color = regime), size = 1) +
-  labs(
-    title = "Natural gas shock",
-    x = "Horizon",
-    y = "Headline inflation (%)"
-  ) +
-  scale_fill_manual(values = c("darkgreen", "red")) +
-  scale_color_manual(values = c("darkgreen", "red")) +
-  theme_minimal() +
-  theme(legend.position = "bottom",  legend.justification = "center",panel.background = element_blank(),  # Remove background
-        panel.grid.major = element_blank(),  # Remove major grid
-        panel.grid.minor = element_blank(),  # Remove minor grid
-        axis.line = element_line(colour = "black"),
-        plot.title = element_text(size = 12, hjust = 0.5)) +
-  xlim(1,18) +
-  geom_hline(yintercept=0)
+# Initialize a list to store the plots
+plot_list <- list()
+legend_plot <- NULL  # Variable to store the first plot with the legend
 
 
+# Loop over each type of shock
+for (i in seq_along(shocks_list)) {
+  shock_type <- names(shocks_list)[i]
+  
+  # Define the current shock
+  shock_vars <- shocks_list[[shock_type]]
+  
+  # 1. Model for the shock (Headline Inflation)
+  
+  
+  shock_overall <- lp_nl_panel(
+    data_set = data,
+    data_sample = "Full",
+    endog_data = "infla_overall",
+    cumul_mult = FALSE,
+    shock = shock_vars$shock,
+    diff_shock = FALSE,
+    panel_model = "within",
+    panel_effect = "individual",
+    robust_cov = "vcovNW",
+    c_exog_data = c("it","diff_fx","exp_to_gdp"),
+    l_exog_data = c("infla_energy","infla_overall","diff_fx","it","exp_to_gdp"),
+    lags_exog_data = 12,
+    switching = "d",
+    use_logistic = F,
+    lag_switching = FALSE,
+    confint = 1.64,
+    hor = 12
+  )
+  
+  # 2. Calculate cumulative IRF for headline inflation
+  cshock_overall <- rbind(
+    cumsum(shock_overall$irf_s1_mean),
+    cumsum(shock_overall$irf_s1_low),
+    cumsum(shock_overall$irf_s1_up),
+    cumsum(shock_overall$irf_s2_mean),
+    cumsum(shock_overall$irf_s2_low),
+    cumsum(shock_overall$irf_s2_up)
+  )
+  cshock_overall <- t(cshock_overall)
+  cshock_overall <- as.data.frame(cshock_overall)
+  cshock_overall$Time <- seq(1, 12)
+  
+  # Rename columns to avoid duplicates
+  # Rename columns to avoid duplicates
+  colnames(cshock_overall) <- c("s1_mean","s1_low","s1_up","s2_mean","s2_low","s2_up","Time")
+  
+  # Prepare data in long format for ggplot
+  colnames(cshock_overall) <- c("mean", "low", "up","mean", "low", "up", "time")
+  cshock_overall_long <- rbind(
+    cbind(cshock_overall[,1:3], regime = "low", time = seq(1,12)),
+    cbind(cshock_overall[,4:6], regime = "high", time = seq(1,12))
+  )
+  
+  # Determine if X-axis label should be shown (only for bottom row)
+  show_x_label <- i > 4  # Only for the last two plots (indices 5 and 6)
+  
+  # 3. Create the plot for overall inflation without a legend
+  plot_no_legend <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+    geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+    geom_line(aes(y = mean, color = regime), size = 1) +
+    labs(
+      title = paste(shock_type, "shock"),
+      x = ifelse(show_x_label, "Horizon", "")  # Only show X-axis label for bottom row, else use empty string
+    ) +
+    scale_fill_manual(values = c("darkgreen", "red")) +
+    scale_color_manual(values = c("darkgreen", "red")) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",  # Remove legend from individual plots
+      panel.background = element_blank(),  
+      axis.line = element_line(colour = "black"),
+      plot.title = element_text(size = 13, hjust = 0.5),
+      axis.text = element_text(size = 12),
+      axis.title.y = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    scale_x_continuous(breaks = 1:12) +
+    ylim(-1, 1) +
+    geom_hline(yintercept = 0)
+  
+  # Add the plot without a legend to the list
+  plot_list[[shock_type]] <- plot_no_legend
+  
+  # Store the first plot with a legend for later use (extract the legend)
+  if (is.null(legend_plot)) {
+    legend_plot <- ggplot(cshock_overall_long, aes(x = time, group = regime)) +
+      geom_ribbon(aes(ymin = low, ymax = up, fill = regime), alpha = 0.2) +
+      geom_line(aes(y = mean, color = regime), size = 1) +
+      scale_fill_manual(values = c("darkgreen", "red")) +
+      scale_color_manual(values = c("darkgreen", "red")) +
+      theme_minimal() +
+      theme(legend.position = "bottom", 
+            legend.text = element_text(size = 18), 
+            legend.title = element_text(size = 18)
+      )
+  }
+}
 
-cairo_ps(file = "CIRF_dummy.eps", onefile = FALSE, fallback_resolution = 600, width = 8, height = 7)
-g <- ggplotGrob(plot1)
-legend <- g$grobs[[which(g$layout$name == "guide-box-bottom")]] 
+# Define improved titles for each plot
+plot_titles <- c(
+  supply_OIL = "Oil supply shock",
+  demand_OIL = "Oil demand shock",
+  price_OIL = "Oil price shock",
+  supply_GAS = "Gas supply shock",
+  demand_GAS = "Gas demand shock",
+  price_GAS = "Gas price shock"
+)
 
-grid.arrange(plot1+theme(legend.position='hidden'), plot2+theme(legend.position='hidden'),
-             plot3+theme(legend.position='hidden'), plot4+theme(legend.position='hidden'), bottom=legend$grobs[[1]],
-             ncol=2)
-dev.off()
+# Apply titles and adjust font sizes in one step
+plot_list <- lapply(names(plot_list), function(shock_type) {
+  plot_list[[shock_type]] +
+    labs(title = plot_titles[[shock_type]]) +  # Assign improved title
+    theme(panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 18),    # Larger title size
+          legend.text = element_text(size = 18)    # Larger legend text size
+    )
+})
 
+
+# Extract the shared legend from the first plot
+g <- ggplotGrob(legend_plot)
+legend <- g$grobs[[which(g$layout$name == "guide-box")]]
+
+# Combine all plots into one figure with a shared legend and Y-axis label
+combined_plot <- grid.arrange(
+  grobs = c(plot_list[1], plot_list[2], plot_list[3],    # First column: oil shocks
+            plot_list[4], plot_list[5], plot_list[6]),   # Second column: gas shocks
+  layout_matrix = matrix(c(1, 4,    # First row: oil_shocks_1 in col 1, gas_shocks_1 in col 2
+                           2, 5,    # Second row: oil_shocks_2 in col 1, gas_shocks_2 in col 2
+                           3, 6),   # Third row: oil_shocks_3 in col 1, gas_shocks_3 in col 2
+                         nrow = 3, byrow = TRUE),
+  bottom = legend,   # Add the shared legend at the bottom
+  left = textGrob("Headline Inflation (%)", rot = 90, gp = gpar(fontsize = 18))  # Shared Y-axis label
+)
+
+# Figure A8
+ggsave(
+  filename = "Headline_shocks_r_2.png",   # Output filename
+  plot = combined_plot,               # Combined plot object
+  width = 16,                         # Width in inches
+  height = 12,                        # Height in inches
+  dpi = 300                           # Resolution at 300 DPI for high quality
+)
