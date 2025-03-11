@@ -1,7 +1,7 @@
 ################################################################################
 #		
-# Title:	The transition to renewables: dampening the
-#		impact of fossil fuel price shocks on local inflation
+# Title:	The role of renewables in smoothing the impact of oil
+#		and gas price shocks on inflation: the LAC experience.
 # 				
 # Authors: 	Magdalena Cornejo, Universidad Torcuato Di Tella and CONICET 
 # 		Michelle Hallack, Florence School of Regulation
@@ -70,7 +70,7 @@ Figures 3 to 9, and A3 to A8 are obtained.
 
 MIT License
 
-Copyright (c) 2024 Magdalena Cornejo
+Copyright (c) 2025 Magdalena Cornejo
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
