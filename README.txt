@@ -1,73 +1,64 @@
-################################################################################
-#		
-# Title:	The role of renewables in smoothing the impact of oil
-#		and gas price shocks on inflation: the LAC experience.
-# 				
-# Authors: 	Magdalena Cornejo, Universidad Torcuato Di Tella and CONICET 
-# 		Michelle Hallack, Florence School of Regulation
-#		David Matias, Inter-American Development Bank
-#		
-################################################################################
+# The Role of Renewables in Smoothing the Impact of Oil and Gas Price Shocks on Inflation: The LAC Experience
 
-################################################################################
-# A. General instructions 
-################################################################################
+### Authors:
 
-This project is designed to be executed in R Studio. 
+- Magdalena Cornejo – Universidad Torcuato Di Tella and CONICET
+- Michelle Hallack – Florence School of Regulation
+- David Matias – Inter-American Development Bank
 
-Notes regarding reproducibility:
+---
 
-We suggest you run script files "svar.R" to get the structural shocks, "panel_stats.R"
-to perform panel unit root tests and calculate summary statistics, and 
-"lp_panel.R" to obtain the local projections and reproduce the results in the paper. 
+## A. General Instructions
 
-If you wish to contact to the authors redarging this project, please reach out to 
-Prof. Magdalena Cornejo (mcornejo@utdt.edu).
+This project is designed to be executed in **Google Colab**. The analysis and code are publicly available at the following link:
 
+🔗 **Google Colab Notebook:** https://colab.research.google.com/drive/1wdKC_L7Ru4dptLchmiK3g-ezmrydafFs?usp=sharing
 
-################################################################################
-# B. Description of data files
-################################################################################
+### Reproducibility Notes:
 
-Folder path				Description
+1. **Download the Data:**
 
-../data1				Raw datasets
-../data2				Intermediate data files
+   - The raw and processed datasets are stored in this GitHub repository.
+   - You need to download the data files and upload them to your Google Colab environment to run the analysis successfully.
 
-File Name				Description
+2. **Repository Structure:**
 
-crude_oil.xlsx				Raw dataset for crude oil SVAR estimation
-natural_gas.xlsx			Raw dataset for natural gas SVAR estimation
-electricity_generation.xlsx		Raw dataset for electricity generation by source in LAC
-electricity_generation_by_country.xlsx	Raw dataset for electricity generation by source in each LAC country
-panel_data.xlsx				Raw dataset for panel local projections estimation
-expenditure.xlsx  			Raw dataset with government expenditure to GDP ratio
-oil_shocks.csv				Intermediate data file with crude oil structural shocks
-gas_shocks.csv         			Intermediate data file with natural gas structural shocks
+   - The **Google Colab Notebook** contains all the necessary code.
+   - The **data files** are hosted in this repository under the `/data1` and `/data2` folders.
 
+3. **Contact Information:**
 
-################################################################################
-# C. Description of script files
-################################################################################
+   - For any questions or collaborations, please reach out to **Prof. Magdalena Cornejo** at 📧 mcornejo@utdt.edu.
 
+---
 
-- svar.R
-Performs Structural VAR estimations for crude oil and natural gas markets
-to identify the structural shocks on prices that will be used for the panel VAR.
+## B. Description of Data Files
 
-Figures 1, 2, A1 and A2, and the top panel of Table A3 are obtained.
+| **Folder Path** | **Description**                   |
+| --------------- | --------------------------------- |
+| `data1/`        | Raw datasets                      |
+| `data2/`        | Processed/Intermediate data files |
 
-- panel_stats.R
-Reports panel unit root tests and summary statistics.
+### File Details
 
-The bottom panel of Table A2, and Table A3 are obtained.
+| **File Name**                            | **Description**                                    |
+| ---------------------------------------- | -------------------------------------------------- |
+| `crude_oil.xlsx`                         | Raw dataset for crude oil SVAR estimation          |
+| `natural_gas.xlsx`                       | Raw dataset for natural gas SVAR estimation        |
+| `electricity_generation.xlsx`            | Raw dataset for electricity generation in LAC      |
+| `electricity_generation_by_country.xlsx` | Raw dataset for electricity generation by country  |
+| `panel_data.xlsx`                        | Raw dataset for panel local projections estimation |
+| `expenditure.xlsx`                       | Government expenditure as a GDP ratio              |
+| `oil_shocks.csv`                         | Processed crude oil structural shocks data         |
+| `gas_shocks.csv`                         | Processed natural gas structural shocks data       |
 
-- lp_panel.R
-Calculates and plots the local projections 
+---
 
-Figures 3 to 9, and A3 to A8 are obtained.
+## C. License
 
+This project is released under the **MIT License**.
 
+```
 MIT License
 
 Copyright (c) 2025 Magdalena Cornejo
@@ -92,3 +83,4 @@ SOFTWARE.
 
 
 The End
+---
